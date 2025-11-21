@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, FastAPI, HTTPException, BackgroundTasks, Depends, Request
 import uvicorn
 
 from models.user import UserBase, UserRead, UserUpdate, UserRegistration
@@ -38,11 +38,14 @@ app = FastAPI(
     # Roles (tenant / landlord / admin)
     # You should have paths for each “resource” implementing GET, PUT, POST, DELETE. The methods can simply return NOT IMPLEMENTED.
 # -----------------------------------------------------------------------------
-@app.post("/users", status_code=201)
+users_router = APIRouter(prefix="/users", tags=["Users"])
+auth_router = APIRouter(prefix="/auth", tags=["Auth"])
+
+@users_router.post("", status_code=201)
 def create_user():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.get("/users")
+@users_router.get("")
 def list_users(
         request: Request, 
         conn = Depends(get_db), 
@@ -84,6 +87,13 @@ def list_users(
         if not users:
             raise HTTPException(status_code=404, detail="No users found")
         
+        # Add hypermedia links to each user
+        base_url = str(request.base_url).rstrip("/")
+        for user in users:
+            user["_links"] = {
+                "self": {"href": f"{base_url}/users/{user['id']}"},
+            }
+        
         response_body = {
             "users": users,
             "page": page,
@@ -97,41 +107,44 @@ def list_users(
     finally:
         cursor.close()
 
-@app.get("/users/{user_id}")
+@users_router.get("{user_id}")
 def get_user(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.put("/users/{user_id}")
+@users_router.put("{user_id}")
 def update_user(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.delete("/users/{user_id}")
+@users_router.delete("{user_id}")
 def delete_user(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.post("/auth/register", status_code=201)
+@auth_router.post("register", status_code=201)
 def register_user():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.post("/auth/login")
+@auth_router.post("login")
 def login():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.get("/users/{user_id}/profile")
+@users_router.get("{user_id}/profile")
 def get_profile(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.put("/users/{user_id}/profile")
+@users_router.put("{user_id}/profile")
 def update_profile(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.get("/users/{user_id}/roles")
+@users_router.get("{user_id}/roles")
 def get_roles(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@app.put("/users/{user_id}/roles")
+@users_router.put("{user_id}/roles")
 def update_roles(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
+
+app.include_router(users_router)
+app.include_router(auth_router)
 
 # -----------------------------------------------------------------------------
 # Root
