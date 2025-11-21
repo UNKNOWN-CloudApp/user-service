@@ -6,10 +6,12 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 import uvicorn
 
 from models.user import UserBase, UserRead, UserUpdate, UserRegistration
+from utils.database import get_db
+from utils.etag import create_etag_response
 
 # Import export task functions
 from services.export_tasks import run_export_task, run_export_all_task
@@ -41,8 +43,21 @@ def create_user():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 @app.get("/users")
-def list_users():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
+def list_users(request: Request, conn = Depends(get_db), role: str | None = None,):
+    cursor = conn.cursor(dictionary=True)
+    try:
+        if role:
+            cursor.execute("SELECT * FROM users WHERE role = %s", (role, ))
+        else:
+            cursor.execute("SELECT * FROM users")
+        users = cursor.fetchall()
+        if not users:
+            raise HTTPException(status_code=404, detail="No users found")
+        
+        return create_etag_response(request, users)
+
+    finally:
+        cursor.close()
 
 @app.get("/users/{user_id}")
 def get_user(user_id: UUID):
