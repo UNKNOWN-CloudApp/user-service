@@ -43,18 +43,56 @@ def create_user():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 @app.get("/users")
-def list_users(request: Request, conn = Depends(get_db), role: str | None = None,):
+def list_users(
+        request: Request, 
+        conn = Depends(get_db), 
+        page: int = 1, 
+        limit: int = 10, 
+        role: str | None = None,
+    ):
     cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * limit
+
     try:
+        # Count total items
         if role:
-            cursor.execute("SELECT * FROM users WHERE role = %s", (role, ))
+            cursor.execute("SELECT COUNT(*) AS total FROM users WHERE role = %s", (role,))
         else:
-            cursor.execute("SELECT * FROM users")
+            cursor.execute("SELECT COUNT(*) AS total FROM users")
+
+        total = cursor.fetchone()["total"]
+
+        # Fetch page
+        if role:
+            cursor.execute("""
+                           SELECT * 
+                           FROM users 
+                           WHERE role = %s
+                           ORDER BY id
+                           LIMIT %s OFFSET %s
+                           """, (role, limit, offset))
+        else:
+            cursor.execute("""
+                           SELECT * 
+                           FROM users 
+                           ORDER BY id
+                           LIMIT %s OFFSET %s
+                           """, (limit, offset))
+        
         users = cursor.fetchall()
+        
         if not users:
             raise HTTPException(status_code=404, detail="No users found")
         
-        return create_etag_response(request, users)
+        response_body = {
+            "users": users,
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total // limit) + int(total % limit > 0)
+        }
+        
+        return create_etag_response(request, response_body)
 
     finally:
         cursor.close()
