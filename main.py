@@ -12,6 +12,7 @@ import uvicorn
 from models.user import UserBase, UserRead, UserUpdate, UserRegistration
 from utils.database import get_db
 from utils.etag import create_etag_response
+from utils.hashing import hash_password
 
 # Import export task functions
 from services.export_tasks import run_export_task, run_export_all_task
@@ -42,8 +43,55 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @users_router.post("", status_code=201)
-def create_user():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
+def create_user(
+        username: str,
+        email: str,
+        password: str,
+        first_name: str,
+        last_name: str,
+        role: str,
+        phone: str | None = None,
+        bio: str | None = None,
+        conn = Depends(get_db),
+):
+    cursor = conn.cursor(dictionary=True)
+
+    # Check if email already used
+    cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+
+    # Check if username already used
+    cursor.execute("SELECT id FROM users WHERE username=%s", (username,))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail="Username is already used")
+    
+    password_hash = hash_password(password)
+    
+    cursor.execute(
+        """
+        INSERT INTO users (username, email, password_hash, first_name, last_name, role, phone, bio)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (username, email, password_hash, first_name, last_name, role, phone, bio)
+    )
+
+    # Get the newly created user ID
+    new_id = cursor.lastrowid
+
+    # Commit the transaction
+    conn.commit()
+
+    cursor.close()
+
+    return {
+        "id": new_id,
+        "username": username,
+        "email": email,
+        "role": role,
+        "phone": phone,
+        "bio": bio
+    }
 
 @users_router.get("")
 def list_users(
