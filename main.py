@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from models.user import UserBase, UserRead, UserUpdate, UserRegistration
@@ -30,6 +31,14 @@ app = FastAPI(
     title="User Service",
     description="User microservice (stubbed endpoints).",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # -----------------------------------------------------------------------------

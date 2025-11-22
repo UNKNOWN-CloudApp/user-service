@@ -6,9 +6,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 def generate_etag(content: Any) -> str:
-    # Convert to a canonical JSON string
+    # Convert to JSON string
     json_str = json.dumps(content, sort_keys=True)
-
     etag = hashlib.md5(json_str.encode()).hexdigest()
     return f'"{etag}"'
 
