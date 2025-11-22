@@ -3,7 +3,7 @@ import mysql.connector.pooling
 db_pool = mysql.connector.pooling.MySQLConnectionPool(
     pool_name="user_service_pool",
     pool_size=10,
-    host="34.71.121.222",
+    host="136.119.132.218",
     port=3306,
     user="user",
     password="Unknown4153@",

@@ -199,7 +199,7 @@ app.include_router(auth_router)
 # -----------------------------------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "User Service (endpoints not implemented yet)"}
+    return {"message": "User Service"}
 
 # -----------------------------------------------------------------------------
 # Export endpoints (if available)
