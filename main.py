@@ -184,14 +184,6 @@ def register_user():
 def login():
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@users_router.get("{user_id}/profile")
-def get_profile(user_id: UUID):
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
-@users_router.put("{user_id}/profile")
-def update_profile(user_id: UUID):
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
 @users_router.get("{user_id}/roles")
 def get_roles(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
