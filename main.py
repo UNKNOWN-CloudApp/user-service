@@ -1,25 +1,15 @@
 from __future__ import annotations
 
 import os
-import socket
-from datetime import datetime
-from typing import Optional
-from uuid import UUID
-
-from fastapi import APIRouter, FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from models.user import UserBase, UserRead, UserUpdate, UserRegistration
 from utils.database import get_db
 from utils.etag import create_etag_response
-from utils.hashing import hash_password
 
-# Import export task functions
-from services.export_tasks import run_export_task, run_export_all_task
 
-import asyncio
-import json
 
 port_env = os.environ.get("PORT") or os.environ.get("FASTAPIPORT") or "8000"
 try:
@@ -44,49 +34,39 @@ app.add_middleware(
 # -----------------------------------------------------------------------------
 # User endpoints
     # User registration & login (JWT authentication)
-    # Profile management (avatar, contact info, reputation)
-    # Roles (tenant / landlord / admin)
-    # You should have paths for each “resource” implementing GET, PUT, POST, DELETE. The methods can simply return NOT IMPLEMENTED.
+    # Profile management
+    # You should have paths for each “resource” implementing GET, PUT, POST, DELETE. 
 # -----------------------------------------------------------------------------
 users_router = APIRouter(prefix="/users", tags=["Users"])
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @users_router.post("", status_code=201)
 def create_user(
-        username: str,
         email: str,
-        password: str,
-        first_name: str,
-        last_name: str,
-        role: str,
-        phone: str | None = None,
-        bio: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        token: str = None,
         conn = Depends(get_db),
 ):
     cursor = conn.cursor(dictionary=True)
 
     # Check if email already used
-    cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
+    cursor.execute("SELECT email FROM users WHERE email=%s", (email,))
     if cursor.fetchone():
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # Check if username already used
-    cursor.execute("SELECT id FROM users WHERE username=%s", (username,))
+    # Check if token already used
+    cursor.execute("SELECT email FROM users WHERE token=%s", (token,))
     if cursor.fetchone():
-        raise HTTPException(status_code=400, detail="Username is already used")
-    
-    password_hash = hash_password(password)
+        raise HTTPException(status_code=400, detail="Token is already used")
     
     cursor.execute(
         """
-        INSERT INTO users (username, email, password_hash, first_name, last_name, role, phone, bio)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO users (email, first_name, last_name, token)
+        VALUES (%s, %s, %s, %s)
         """,
-        (username, email, password_hash, first_name, last_name, role, phone, bio)
+        (email, first_name, last_name, token)
     )
-
-    # Get the newly created user ID
-    new_id = cursor.lastrowid
 
     # Commit the transaction
     conn.commit()
@@ -94,12 +74,10 @@ def create_user(
     cursor.close()
 
     return {
-        "id": new_id,
-        "username": username,
         "email": email,
-        "role": role,
-        "phone": phone,
-        "bio": bio
+        "first_name": first_name,
+        "last_name": last_name,
+        "token": token
     }
 
 @users_router.get("")
@@ -107,37 +85,23 @@ def list_users(
         request: Request, 
         conn = Depends(get_db), 
         page: int = 1, 
-        limit: int = 10, 
-        role: str | None = None,
+        limit: int = 10,
     ):
     cursor = conn.cursor(dictionary=True)
     offset = (page - 1) * limit
 
     try:
         # Count total items
-        if role:
-            cursor.execute("SELECT COUNT(*) AS total FROM users WHERE role = %s", (role,))
-        else:
-            cursor.execute("SELECT COUNT(*) AS total FROM users")
-
+        cursor.execute("SELECT COUNT(*) AS total FROM users")
         total = cursor.fetchone()["total"]
 
         # Fetch page
-        if role:
-            cursor.execute("""
-                           SELECT * 
-                           FROM users 
-                           WHERE role = %s
-                           ORDER BY id
-                           LIMIT %s OFFSET %s
-                           """, (role, limit, offset))
-        else:
-            cursor.execute("""
-                           SELECT * 
-                           FROM users 
-                           ORDER BY id
-                           LIMIT %s OFFSET %s
-                           """, (limit, offset))
+        cursor.execute("""
+                       SELECT * 
+                       FROM users 
+                       ORDER BY email
+                       LIMIT %s OFFSET %s
+                       """, (limit, offset))
         
         users = cursor.fetchall()
         
@@ -148,7 +112,7 @@ def list_users(
         base_url = str(request.base_url).rstrip("/")
         for user in users:
             user["_links"] = {
-                "self": {"href": f"{base_url}/users/{user['id']}"},
+                "self": {"href": f"{base_url}/users/{user['token']}"},
             }
         
         response_body = {
@@ -164,16 +128,16 @@ def list_users(
     finally:
         cursor.close()
 
-@users_router.get("{user_id}")
-def get_user(user_id: UUID):
+@users_router.get("/{token}")
+def get_user(token: str):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@users_router.put("{user_id}")
-def update_user(user_id: UUID):
+@users_router.put("/{token}")
+def update_user(token: str):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
-@users_router.delete("{user_id}")
-def delete_user(user_id: UUID):
+@users_router.delete("/{token}")
+def delete_user(token: str):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 @auth_router.post("register", status_code=201)
@@ -182,14 +146,6 @@ def register_user():
 
 @auth_router.post("login")
 def login():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
-@users_router.get("{user_id}/roles")
-def get_roles(user_id: UUID):
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
-@users_router.put("{user_id}/roles")
-def update_roles(user_id: UUID):
     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 app.include_router(users_router)
@@ -201,34 +157,6 @@ app.include_router(auth_router)
 @app.get("/")
 def root():
     return {"message": "User Service"}
-
-# -----------------------------------------------------------------------------
-# Export endpoints (if available)
-# -----------------------------------------------------------------------------
-
-# In-memory task tracking
-export_tasks = {}
-
-@app.post("/export/users/{role}", status_code=202)
-async def export_users_by_role(role: str, background_tasks: BackgroundTasks):
-    """Export users by role"""
-    task_id = f"export_{role}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    export_tasks[task_id] = {"status": "started", "role": role}
-    background_tasks.add_task(run_export_task, task_id, role, export_tasks)
-    return {"task_id": task_id}
-
-@app.post("/export/users/", status_code=202)
-async def export_all_users(background_tasks: BackgroundTasks):
-    """Export all users"""
-    task_id = f"export_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    export_tasks[task_id] = {"status": "started", "role": "all"}
-    background_tasks.add_task(run_export_all_task, task_id, export_tasks)
-    return {"task_id": task_id}
-
-@app.get("/export/status/{task_id}")
-async def get_export_status(task_id: str):
-    """Get export status"""
-    return export_tasks.get(task_id, {"error": "Task not found"})
 
 # -----------------------------------------------------------------------------
 # Entrypoint
