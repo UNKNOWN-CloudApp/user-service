@@ -11,11 +11,11 @@ from utils.etag import create_etag_response
 
 
 
-port_env = os.environ.get("PORT") or os.environ.get("FASTAPIPORT") or "8000"
+port_env = os.environ.get("PORT") or os.environ.get("FASTAPIPORT") or "8080"
 try:
     port = int(port_env)
 except ValueError:
-    port = 8000
+    port = 8080
 
 app = FastAPI(
     title="User Service",
