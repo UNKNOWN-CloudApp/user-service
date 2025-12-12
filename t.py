@@ -5,27 +5,24 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-# import jwt
-import uvicorn
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Body, status
+from fastapi import APIRouter, FastAPI, HTTPException, Depends, Request, Body, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token as google_id_token
-from pydantic import BaseModel
+import uvicorn
 
 # Auth / JWT Libraries
 from jose import JWTError, jwt
 from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from pydantic import BaseModel
 
-from models.user import UserBase, UserRead, UserRegistration, UserUpdate
+# Your Local Imports (Assumed existing)
+from models.user import UserBase, UserRead, UserUpdate, UserRegistration
 from utils.database import get_db
 from utils.etag import create_etag_response
 
-
-
 # -----------------------------------------------------------------------------
-# Basic settings
+# Configuration & Env Vars
 # -----------------------------------------------------------------------------
 port_env = os.environ.get("PORT") or os.environ.get("FASTAPIPORT") or "8080"
 try:
@@ -33,22 +30,22 @@ try:
 except ValueError:
     port = 8080
 
+# Google & JWT Config
 GOOGLE_CLIENT_ID = os.getenv(
     "GOOGLE_CLIENT_ID",
     "1038095584126-tckmgh956ai8220d9atiualu8j8p2iri.apps.googleusercontent.com",
 )
-APP_JWT_SECRET = os.environ.get("APP_JWT_SECRET", "dev-secret-change-me")
-APP_JWT_ALGORITHM = os.environ.get("APP_JWT_ALGORITHM", "HS256")
+APP_JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-secret-change-me")
 APP_JWT_ALG = "HS256"
 APP_JWT_AUD = "user-service-audience"
-APP_JWT_EXPIRE_MINUTES = int(os.environ.get("APP_JWT_EXPIRE_MINUTES", "60"))
 APP_JWT_EXPIRES_MIN = int(os.getenv("APP_JWT_EXPIRES_MIN", "60"))
 
-bearer_scheme = HTTPBearer(auto_error=False)
-
+# -----------------------------------------------------------------------------
+# App Setup
+# -----------------------------------------------------------------------------
 app = FastAPI(
     title="User Service",
-    description="User microservice (stubbed endpoints).",
+    description="User microservice with Google OIDC + JWT Auth.",
     version="0.1.0",
 )
 
@@ -60,46 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------------------------------------------------------
-# Schemas
-# -----------------------------------------------------------------------------
-class GoogleLoginRequest(BaseModel):
-    id_token: str
-
-
-class AccessTokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-    user: Dict[str, Any]
-
-
-# -----------------------------------------------------------------------------
-# Auth helpers
-# -----------------------------------------------------------------------------
-def create_access_token(claims: Dict[str, Any]) -> str:
-    expires_at = datetime.utcnow() + timedelta(minutes=APP_JWT_EXPIRE_MINUTES)
-    payload = {**claims, "exp": expires_at}
-    return jwt.encode(payload, APP_JWT_SECRET, algorithm=APP_JWT_ALGORITHM)
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> Dict[str, Any]:
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-
-    token = credentials.credentials
-    try:
-        return jwt.decode(
-            token,
-            APP_JWT_SECRET,
-            algorithms=[APP_JWT_ALGORITHM],
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+bearer_scheme = HTTPBearer(auto_error=False)
 
 # -----------------------------------------------------------------------------
 # Auth Helper Classes & Functions
@@ -141,8 +99,6 @@ def _verify_app_jwt(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid app token: {exc}",
         ) from exc
-
-
 
 # -----------------------------------------------------------------------------
 # Routers
@@ -240,259 +196,188 @@ def exchange_google_token(
     finally:
         cursor.close()
 
-# @auth_router.post("/google", response_model=AccessTokenResponse, status_code=200)
-# def login_with_google(payload: GoogleLoginRequest):
-#     if not GOOGLE_CLIENT_ID:
-#         raise HTTPException(
-#             status_code=500,
-#             detail="GOOGLE_CLIENT_ID is not configured on the server",
-#         )
-
-#     try:
-#         idinfo = google_id_token.verify_oauth2_token(
-#             payload.id_token,
-#             google_requests.Request(),
-#             GOOGLE_CLIENT_ID,
-#         )
-#     except ValueError as exc:
-#         raise HTTPException(status_code=401, detail="Invalid Google ID token") from exc
-
-#     user_claims = {
-#         "sub": idinfo.get("sub"),
-#         "email": idinfo.get("email"),
-#         "name": idinfo.get("name"),
-#         "picture": idinfo.get("picture"),
-#         "iss": "user-service",
-#     }
-
-#     access_token = create_access_token(user_claims)
-#     return AccessTokenResponse(
-#         access_token=access_token,
-#         expires_in=APP_JWT_EXPIRE_MINUTES * 60,
-#         user=user_claims,
-#     )
-
-
-@auth_router.post("/register", status_code=501)
-def register_user():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
-
-@auth_router.post("/login", status_code=501)
-def login():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
-
-
-@users_router.get("/me", status_code=200)
-def read_current_user(current_user=Depends(get_current_user)):
-    return {
-        "message": "Authenticated request to user microservice succeeded",
-        "token_claims": current_user,
-    }
-
+# -----------------------------------------------------------------------------
+# User Endpoints (CRUD)
+# -----------------------------------------------------------------------------
 
 @users_router.post("", status_code=201)
 def create_user(
-    email: str,
-    first_name: str | None = None,
-    last_name: str | None = None,
-    token: str | None = None,
-    conn=Depends(get_db),
+        email: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        token: str = None,
+        conn = Depends(get_db),
 ):
     cursor = conn.cursor(dictionary=True)
+    try:
+        # Check if email exists
+        cursor.execute("SELECT email FROM users WHERE email=%s", (email,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # Check if email already used
-    cursor.execute("SELECT email FROM users WHERE email=%s", (email,))
-    if cursor.fetchone():
-        raise HTTPException(
-            status_code=400, detail="User with this email already exists"
+        # Check if token exists
+        cursor.execute("SELECT email FROM users WHERE token=%s", (token,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Token is already used")
+        
+        cursor.execute(
+            """
+            INSERT INTO users (email, first_name, last_name, token)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (email, first_name, last_name, token)
         )
-
-    # Check if token already used
-    cursor.execute("SELECT email FROM users WHERE token=%s", (token,))
-    if cursor.fetchone():
-        raise HTTPException(status_code=400, detail="Token is already used")
-
-    cursor.execute(
-        """
-        INSERT INTO users (email, first_name, last_name, token)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (email, first_name, last_name, token),
-    )
-
-    # Commit the transaction
-    conn.commit()
-
-    cursor.close()
-
-    return {
-        "email": email,
-        "first_name": first_name,
-        "last_name": last_name,
-        "token": token,
-    }
-
+        conn.commit()
+        
+        return {
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "token": token
+        }
+    finally:
+        cursor.close()
 
 @users_router.get("", status_code=200)
 def list_users(
-    request: Request,
-    conn=Depends(get_db),
-    page: int = 1,
-    limit: int = 10,
-    current_user=Depends(get_current_user),
-):
+        request: Request, 
+        conn = Depends(get_db), 
+        page: int = 1, 
+        limit: int = 10,
+        # Optional: Uncomment to protect this route
+        # claims: Dict[str, Any] = Depends(_verify_app_jwt) 
+    ):
     cursor = conn.cursor(dictionary=True)
     offset = (page - 1) * limit
 
     try:
-        # Count total items
         cursor.execute("SELECT COUNT(*) AS total FROM users")
         total = cursor.fetchone()["total"]
 
-        # Fetch page
-        cursor.execute(
-            """
-                       SELECT * 
-                       FROM users 
-                       ORDER BY email
-                       LIMIT %s OFFSET %s
-                       """,
-            (limit, offset),
-        )
-
+        cursor.execute("""
+                        SELECT * FROM users 
+                        ORDER BY email
+                        LIMIT %s OFFSET %s
+                        """, (limit, offset))
+        
         users = cursor.fetchall()
-
+        
         if not users:
+            # Note: Returning 404 for empty list is valid but often empty list [] is preferred 
+            # for collections. Kept 404 per your original code.
             raise HTTPException(status_code=404, detail="No users found")
-
-        # Add hypermedia links to each user
+        
         base_url = str(request.base_url).rstrip("/")
         for user in users:
             user["_links"] = {
                 "self": {"href": f"{base_url}/users/{user['token']}"},
             }
-
+        
         response_body = {
             "users": users,
             "page": page,
             "limit": limit,
             "total": total,
-            "pages": (total // limit) + int(total % limit > 0),
+            "pages": (total // limit) + int(total % limit > 0)
         }
-
+        
         return create_etag_response(request, response_body)
 
     finally:
         cursor.close()
 
-
 @users_router.get("/{token}", status_code=200)
-def get_user(token: str, request: Request, conn=Depends(get_db)):
+def get_user(
+    token: str, 
+    request: Request, 
+    conn = Depends(get_db),
+    # claims: Dict[str, Any] = Depends(_verify_app_jwt) # Example of protection
+):
     cursor = conn.cursor(dictionary=True)
-
     try:
         cursor.execute("SELECT * FROM users WHERE token = %s", (token,))
         user = cursor.fetchone()
-
+        
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-
+        
         return create_etag_response(request, user)
-
     finally:
         cursor.close()
 
-
 @users_router.put("/{token}", status_code=200)
 def update_user(
-    token: str,
-    request: Request,
-    first_name: str | None = None,
-    last_name: str | None = None,
-    conn=Depends(get_db),
+        token: str, 
+        request: Request,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        conn = Depends(get_db)
 ):
     cursor = conn.cursor(dictionary=True)
-
     try:
-        # Check if user exists
         cursor.execute("SELECT * FROM users WHERE token = %s", (token,))
         existing_user = cursor.fetchone()
-
+        
         if not existing_user:
             raise HTTPException(status_code=404, detail="User not found")
-
-        # Build update query dynamically based on provided fields
+        
         update_fields = []
         update_values = []
-
+        
         if first_name is not None:
             update_fields.append("first_name = %s")
             update_values.append(first_name)
-
+            
         if last_name is not None:
             update_fields.append("last_name = %s")
             update_values.append(last_name)
-
+        
         if not update_fields:
             raise HTTPException(status_code=400, detail="No fields to update")
-
-        # Add token for WHERE clause
+        
         update_values.append(token)
-
+        
         update_query = f"""
             UPDATE users 
             SET {', '.join(update_fields)}
             WHERE token = %s
         """
-
+        
         cursor.execute(update_query, update_values)
         conn.commit()
-
-        # Fetch updated user
+        
         cursor.execute("SELECT * FROM users WHERE token = %s", (token,))
         updated_user = cursor.fetchone()
-
+        
         return create_etag_response(request, updated_user)
-
     finally:
         cursor.close()
-
 
 @users_router.delete("/{token}", status_code=204)
-def delete_user(token: str, conn=Depends(get_db)):
+def delete_user(token: str, conn = Depends(get_db)):
     cursor = conn.cursor(dictionary=True)
-
     try:
-        # Check if user exists
         cursor.execute("SELECT * FROM users WHERE token = %s", (token,))
         existing_user = cursor.fetchone()
-
+        
         if not existing_user:
             raise HTTPException(status_code=404, detail="User not found")
-
-        # Delete the user
+        
         cursor.execute("DELETE FROM users WHERE token = %s", (token,))
         conn.commit()
-
-        # Return empty response for 204 No Content
         return None
-
     finally:
         cursor.close()
 
-
+# -----------------------------------------------------------------------------
+# Register Routers
+# -----------------------------------------------------------------------------
 app.include_router(users_router)
 app.include_router(auth_router)
 
-
-# -----------------------------------------------------------------------------
-# Root
-# -----------------------------------------------------------------------------
 @app.get("/", status_code=200)
 def root():
     return {"message": "User Service"}
-
 
 # -----------------------------------------------------------------------------
 # Entrypoint
