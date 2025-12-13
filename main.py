@@ -397,6 +397,14 @@ def list_users(
     finally:
         cursor.close()
 
+@users_router.get("/exists", status_code=200)
+def user_exists(email: str, conn=Depends(get_db)):
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT 1 FROM users WHERE email=%s LIMIT 1", (email,))
+        return {"exists": cursor.fetchone() is not None}
+    finally:
+        cursor.close()
 
 @users_router.get("/{token}", status_code=200)
 def get_user(
@@ -423,7 +431,6 @@ def get_user(
 
     finally:
         cursor.close()
-
 
 @users_router.put("/{token}", status_code=200)
 def update_user(
