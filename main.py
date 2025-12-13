@@ -1,3 +1,7 @@
+"""
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+FastAPI demo showing Google OIDC login -> app-issued JWT -> protected microservice.
+"""
 from __future__ import annotations
 
 import os
@@ -185,6 +189,9 @@ def exchange_google_token(
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid Google token: {exc}")
 
+    google_sub = google_claims.get("sub")
+    if not google_sub:
+        raise HTTPException(status_code=400, detail="Google token missing subject.")
     email = google_claims.get("email")
     if not email:
         raise HTTPException(status_code=400, detail="Google token missing email scope.")
@@ -195,17 +202,21 @@ def exchange_google_token(
         cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
         existing_user = cursor.fetchone()
 
-        user_token_id = None
+        user_token_id = google_sub
 
         if existing_user:
             # User exists, grab their internal ID/Token
-            user_token_id = existing_user["token"]
+            if existing_user["token"] != google_sub:
+                cursor.execute(
+                    "UPDATE users SET token = %s WHERE email = %s",
+                    (google_sub, email),
+                )
+                conn.commit()
             
             # Optional: Update profile picture or name from Google if changed?
             # For now, we just proceed to login.
         else:
             # 3. Register new user
-            user_token_id = str(uuid.uuid4())
             first_name = google_claims.get("given_name") or google_claims.get("name", "User")
             last_name = google_claims.get("family_name", "")
             
@@ -388,7 +399,17 @@ def list_users(
 
 
 @users_router.get("/{token}", status_code=200)
-def get_user(token: str, request: Request, conn=Depends(get_db)):
+def get_user(
+    token: str,
+    request: Request,
+    claims: Dict[str, Any] = Depends(_verify_app_jwt),
+    conn=Depends(get_db),
+):
+    if claims.get("sub") != token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token does not match the authenticated user",
+        )
     cursor = conn.cursor(dictionary=True)
 
     try:
@@ -408,10 +429,16 @@ def get_user(token: str, request: Request, conn=Depends(get_db)):
 def update_user(
     token: str,
     request: Request,
+    claims: Dict[str, Any] = Depends(_verify_app_jwt),
     first_name: str | None = None,
     last_name: str | None = None,
     conn=Depends(get_db),
 ):
+    if claims.get("sub") != token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token does not match the authenticated user",
+        )
     cursor = conn.cursor(dictionary=True)
 
     try:
