@@ -157,13 +157,13 @@ auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 # -----------------------------------------------------------------------------
 # Auth Endpoints (Google Login)
 # -----------------------------------------------------------------------------
-@app.get("/api/profile")
-def read_profile(claims: Dict[str, Any] = Depends(_verify_app_jwt)) -> Dict[str, Any]:
-    """Protected microservice endpoint that requires the app-issued JWT."""
-    return {
-        "message": "You are authorized to view this profile.",
+# @app.get("/api/profile")
+# def read_profile(claims: Dict[str, Any] = Depends(_verify_app_jwt)) -> Dict[str, Any]:
+#     """Protected microservice endpoint that requires the app-issued JWT."""
+#     return {
+#         "message": "You are authorized to view this profile.",
         
-    }
+#     }
 
 
 @auth_router.post("/google", status_code=200)
@@ -284,22 +284,22 @@ def exchange_google_token(
 #     )
 
 
-@auth_router.post("/register", status_code=501)
-def register_user():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
+# @auth_router.post("/register", status_code=501)
+# def register_user():
+#     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 
-@auth_router.post("/login", status_code=501)
-def login():
-    raise HTTPException(status_code=501, detail="Not implemented yet")
+# @auth_router.post("/login", status_code=501)
+# def login():
+#     raise HTTPException(status_code=501, detail="Not implemented yet")
 
 
-@users_router.get("/me", status_code=200)
-def read_current_user(current_user=Depends(get_current_user)):
-    return {
-        "message": "Authenticated request to user microservice succeeded",
-        "token_claims": current_user,
-    }
+# @users_router.get("/me", status_code=200)
+# def read_current_user(current_user=Depends(get_current_user)):
+#     return {
+#         "message": "Authenticated request to user microservice succeeded",
+#         "token_claims": current_user,
+#     }
 
 
 @users_router.post("", status_code=201)
@@ -347,12 +347,11 @@ def create_user(
 
 @users_router.get("", status_code=200)
 def list_users(
-    request: Request,
-    conn=Depends(get_db),
-    page: int = 1,
-    limit: int = 10,
-    current_user=Depends(get_current_user),
-):
+        request: Request, 
+        conn = Depends(get_db), 
+        page: int = 1, 
+        limit: int = 10,
+    ):
     cursor = conn.cursor(dictionary=True)
     offset = (page - 1) * limit
 
@@ -362,40 +361,38 @@ def list_users(
         total = cursor.fetchone()["total"]
 
         # Fetch page
-        cursor.execute(
-            """
+        cursor.execute("""
                        SELECT * 
                        FROM users 
                        ORDER BY email
                        LIMIT %s OFFSET %s
-                       """,
-            (limit, offset),
-        )
-
+                       """, (limit, offset))
+        
         users = cursor.fetchall()
-
+        
         if not users:
             raise HTTPException(status_code=404, detail="No users found")
-
+        
         # Add hypermedia links to each user
         base_url = str(request.base_url).rstrip("/")
         for user in users:
             user["_links"] = {
                 "self": {"href": f"{base_url}/users/{user['token']}"},
             }
-
+        
         response_body = {
             "users": users,
             "page": page,
             "limit": limit,
             "total": total,
-            "pages": (total // limit) + int(total % limit > 0),
+            "pages": (total // limit) + int(total % limit > 0)
         }
-
+        
         return create_etag_response(request, response_body)
 
     finally:
         cursor.close()
+
 
 @users_router.get("/exists", status_code=200)
 def user_exists(email: str, conn=Depends(get_db)):
