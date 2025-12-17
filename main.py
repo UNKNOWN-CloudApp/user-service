@@ -491,7 +491,16 @@ def update_user(
 
 
 @users_router.delete("/{token}", status_code=204)
-def delete_user(token: str, conn=Depends(get_db)):
+def delete_user(
+    token: str,
+    claims: Dict[str, Any] = Depends(_verify_app_jwt),
+    conn=Depends(get_db),
+):
+    if claims.get("sub") != token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token does not match the authenticated user",
+        )
     cursor = conn.cursor(dictionary=True)
 
     try:
